@@ -121,6 +121,11 @@ module AliMNS{
                 mnsHeaders, contentType, contentMD5, tm);
             headers.Host = mnsURL.host;
 
+            // set STS Token headers
+            if(!!this._account.getStsToken()) {
+                headers["security-token"] = this._account.getStsToken();
+            }
+
             return headers;
         }
 

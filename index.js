@@ -1,4 +1,4 @@
-var gitVersion={"branch":"master","rev":"135","hash":"ae2f769","hash160":"ae2f769c7b594ca914325aa4380e99978f2bb6e5"};
+var gitVersion={"branch":"master","rev":"136","hash":"4a28342","hash160":"4a2834281f2b4d862bcbfc0b55a050a19cf57c4b"};
 var __extends = (this && this.__extends) || (function () {
     var extendStatics = Object.setPrototypeOf ||
         ({ __proto__: [] } instanceof Array && function (d, b) { d.__proto__ = b; }) ||
@@ -29,16 +29,18 @@ var AliMNS;
 (function (AliMNS) {
     // The Ali account, it holds the key id and secret.
     var Account = /** @class */ (function () {
-        function Account(accountId, keyId, keySecret) {
+        function Account(accountId, keyId, keySecret, stsToken) {
             this._bGoogleAnalytics = true; // Enable Google Analytics
             this._bHttps = false; // Default to use http
             this._accountId = accountId;
             this._keyId = keyId;
             this._keySecret = keySecret;
+            this._stsToken = stsToken;
         }
         Account.prototype.getAccountId = function () { return this._accountId; };
         Account.prototype.getOwnerId = function () { return this._accountId; }; // for compatible v1.x
         Account.prototype.getKeyId = function () { return this._keyId; };
+        Account.prototype.getStsToken = function () { return this._stsToken; };
         Account.prototype.getGA = function () { return this._bGoogleAnalytics; };
         Account.prototype.setGA = function (bGA) { this._bGoogleAnalytics = bGA; };
         Account.prototype.getHttps = function () { return this._bHttps; };
@@ -55,6 +57,66 @@ var AliMNS;
         return Account;
     }());
     AliMNS.Account = Account;
+})(AliMNS || (AliMNS = {}));
+var AliMNS;
+(function (AliMNS) {
+    var GA = /** @class */ (function () {
+        function GA(accId) {
+            this._bGoogleAnalytics = true;
+            this._rgxAccId = /\/\/\w+\./;
+            this._bAccumulated = false;
+            this._bAccumulatePrefix = "";
+            this._accumutionMax = 100;
+            this._accumulation = {};
+            this._gitMark = gitVersion.branch + "." + gitVersion.rev + "@" + gitVersion.hash;
+            this._visitor = UA("UA-75293894-6", this.u2id(accId));
+        }
+        GA.prototype.send = function (action, value, url) {
+            if (this._bGoogleAnalytics) {
+                if (this._bAccumulated) {
+                    // 累积多个一起发送
+                    this._bAccumulated = false;
+                    var actionPrefixed = this._bAccumulatePrefix + ":" + action;
+                    if (!this._accumulation[actionPrefixed])
+                        this._accumulation[actionPrefixed] = { value: 0, count: 0 };
+                    this._accumulation[actionPrefixed].value += value;
+                    this._accumulation[actionPrefixed].count++;
+                    if (this._accumulation[actionPrefixed].count >= this._accumutionMax) {
+                        this.send(actionPrefixed, this._accumulation[actionPrefixed].value, url);
+                        this._accumulation[actionPrefixed].value = 0;
+                        this._accumulation[actionPrefixed].count = 0;
+                    }
+                }
+                else {
+                    var args = { dl: url.replace(this._rgxAccId, "//0.") };
+                    // catagory, action, label, value, params
+                    this._visitor.event("AliMNS", action, this._gitMark, value, args).send();
+                }
+            }
+        };
+        GA.prototype.accumulateNextSend = function (prefix) {
+            this._bAccumulated = true;
+            this._bAccumulatePrefix = prefix;
+        };
+        GA.prototype.disableGA = function (bDisable) {
+            this._bGoogleAnalytics = (!bDisable);
+        };
+        GA.prototype.u2id = function (uid) {
+            var cryptoMD5 = CryptoA.createHash("md5");
+            var md5HEX = cryptoMD5.update(uid).digest("hex");
+            var uxid = new Array(36);
+            for (var i = 0, j = 0; i < md5HEX.length; i++, j++) {
+                if (i === 8 || i === 12 || i === 16 || i === 20) {
+                    uxid[j] = "-";
+                    j++;
+                }
+                uxid[j] = md5HEX.charAt(i);
+            }
+            return uxid.join("");
+        };
+        return GA;
+    }());
+    AliMNS.GA = GA;
 })(AliMNS || (AliMNS = {}));
 var AliMNS;
 (function (AliMNS) {
@@ -202,6 +264,10 @@ var AliMNS;
             headers.Date = tm;
             headers.Authorization = this.authorize(mothod, mnsURL.path, mnsHeaders, contentType, contentMD5, tm);
             headers.Host = mnsURL.host;
+            // set STS Token headers
+            if (!!this._account.getStsToken()) {
+                headers["security-token"] = this._account.getStsToken();
+            }
             return headers;
         };
         // ali mns authorize header
@@ -497,6 +563,56 @@ var AliMNS;
     AliMNS.MNS = MNS;
     // For compatible v1.x
     AliMNS.MQS = MNS;
+})(AliMNS || (AliMNS = {}));
+/// <reference path="Interfaces.ts" />
+/// <reference path="Region.ts" />
+var AliMNS;
+/// <reference path="Interfaces.ts" />
+/// <reference path="Region.ts" />
+(function (AliMNS) {
+    var MNSTopic = /** @class */ (function (_super) {
+        __extends(MNSTopic, _super);
+        function MNSTopic(account, region) {
+            var _this = _super.call(this, account, region) || this;
+            _this._patternTopic = "%s://%s.mns.%s.aliyuncs.com/topics/";
+            // make url
+            _this._urlTopic = _this.makeTopicURL();
+            return _this;
+        }
+        // List all topics.
+        MNSTopic.prototype.listTopicP = function (prefix, pageSize, pageMarker) {
+            var headers = {};
+            if (prefix)
+                headers["x-mns-prefix"] = prefix;
+            if (pageMarker)
+                headers["x-mns-marker"] = pageMarker;
+            if (pageSize)
+                headers["x-mns-ret-number"] = pageSize;
+            var url = this._urlTopic.slice(0, -1);
+            debug("GET " + url);
+            return this._openStack.sendP("GET", url, null, headers);
+        };
+        // Create a topic
+        MNSTopic.prototype.createTopicP = function (name, options) {
+            var body = { Topic: "" };
+            if (options)
+                body.Topic = options;
+            var url = Url.resolve(this._urlTopic, name);
+            debug("PUT " + url, body);
+            return this._openStack.sendP("PUT", url, body);
+        };
+        // Delete a topic
+        MNSTopic.prototype.deleteTopicP = function (name) {
+            var url = Url.resolve(this._urlTopic, name);
+            debug("DELETE " + url);
+            return this._openStack.sendP("DELETE", url);
+        };
+        MNSTopic.prototype.makeTopicURL = function () {
+            return Util.format(this._patternTopic, this._account.getHttps() ? "https" : "http", this._account.getAccountId(), this._region.toString());
+        };
+        return MNSTopic;
+    }(AliMNS.MNS));
+    AliMNS.MNSTopic = MNSTopic;
 })(AliMNS || (AliMNS = {}));
 /// <reference path="Interfaces.ts" />
 /// <reference path="ali-mns.ts" />
@@ -935,124 +1051,6 @@ var AliMNS;
     }(AliMNS.MQ));
     AliMNS.MQBatch = MQBatch;
 })(AliMNS || (AliMNS = {}));
-/// <reference path="ali-mns.ts" />
-/// <reference path="MNS.ts" />
-/// <reference path="Account.ts" />
-/// <reference path="Msg.ts" />
-/// <reference path="MQ.ts" />
-/// <reference path="MQBatch.ts" />
-// Exports the AliMNS
-module.exports = AliMNS;
-var AliMNS;
-(function (AliMNS) {
-    var GA = /** @class */ (function () {
-        function GA(accId) {
-            this._bGoogleAnalytics = true;
-            this._rgxAccId = /\/\/\w+\./;
-            this._bAccumulated = false;
-            this._bAccumulatePrefix = "";
-            this._accumutionMax = 100;
-            this._accumulation = {};
-            this._gitMark = gitVersion.branch + "." + gitVersion.rev + "@" + gitVersion.hash;
-            this._visitor = UA("UA-75293894-6", this.u2id(accId));
-        }
-        GA.prototype.send = function (action, value, url) {
-            if (this._bGoogleAnalytics) {
-                if (this._bAccumulated) {
-                    // 累积多个一起发送
-                    this._bAccumulated = false;
-                    var actionPrefixed = this._bAccumulatePrefix + ":" + action;
-                    if (!this._accumulation[actionPrefixed])
-                        this._accumulation[actionPrefixed] = { value: 0, count: 0 };
-                    this._accumulation[actionPrefixed].value += value;
-                    this._accumulation[actionPrefixed].count++;
-                    if (this._accumulation[actionPrefixed].count >= this._accumutionMax) {
-                        this.send(actionPrefixed, this._accumulation[actionPrefixed].value, url);
-                        this._accumulation[actionPrefixed].value = 0;
-                        this._accumulation[actionPrefixed].count = 0;
-                    }
-                }
-                else {
-                    var args = { dl: url.replace(this._rgxAccId, "//0.") };
-                    // catagory, action, label, value, params
-                    this._visitor.event("AliMNS", action, this._gitMark, value, args).send();
-                }
-            }
-        };
-        GA.prototype.accumulateNextSend = function (prefix) {
-            this._bAccumulated = true;
-            this._bAccumulatePrefix = prefix;
-        };
-        GA.prototype.disableGA = function (bDisable) {
-            this._bGoogleAnalytics = (!bDisable);
-        };
-        GA.prototype.u2id = function (uid) {
-            var cryptoMD5 = CryptoA.createHash("md5");
-            var md5HEX = cryptoMD5.update(uid).digest("hex");
-            var uxid = new Array(36);
-            for (var i = 0, j = 0; i < md5HEX.length; i++, j++) {
-                if (i === 8 || i === 12 || i === 16 || i === 20) {
-                    uxid[j] = "-";
-                    j++;
-                }
-                uxid[j] = md5HEX.charAt(i);
-            }
-            return uxid.join("");
-        };
-        return GA;
-    }());
-    AliMNS.GA = GA;
-})(AliMNS || (AliMNS = {}));
-/// <reference path="Interfaces.ts" />
-/// <reference path="Region.ts" />
-var AliMNS;
-/// <reference path="Interfaces.ts" />
-/// <reference path="Region.ts" />
-(function (AliMNS) {
-    var MNSTopic = /** @class */ (function (_super) {
-        __extends(MNSTopic, _super);
-        function MNSTopic(account, region) {
-            var _this = _super.call(this, account, region) || this;
-            _this._patternTopic = "%s://%s.mns.%s.aliyuncs.com/topics/";
-            // make url
-            _this._urlTopic = _this.makeTopicURL();
-            return _this;
-        }
-        // List all topics.
-        MNSTopic.prototype.listTopicP = function (prefix, pageSize, pageMarker) {
-            var headers = {};
-            if (prefix)
-                headers["x-mns-prefix"] = prefix;
-            if (pageMarker)
-                headers["x-mns-marker"] = pageMarker;
-            if (pageSize)
-                headers["x-mns-ret-number"] = pageSize;
-            var url = this._urlTopic.slice(0, -1);
-            debug("GET " + url);
-            return this._openStack.sendP("GET", url, null, headers);
-        };
-        // Create a topic
-        MNSTopic.prototype.createTopicP = function (name, options) {
-            var body = { Topic: "" };
-            if (options)
-                body.Topic = options;
-            var url = Url.resolve(this._urlTopic, name);
-            debug("PUT " + url, body);
-            return this._openStack.sendP("PUT", url, body);
-        };
-        // Delete a topic
-        MNSTopic.prototype.deleteTopicP = function (name) {
-            var url = Url.resolve(this._urlTopic, name);
-            debug("DELETE " + url);
-            return this._openStack.sendP("DELETE", url);
-        };
-        MNSTopic.prototype.makeTopicURL = function () {
-            return Util.format(this._patternTopic, this._account.getHttps() ? "https" : "http", this._account.getAccountId(), this._region.toString());
-        };
-        return MNSTopic;
-    }(AliMNS.MNS));
-    AliMNS.MNSTopic = MNSTopic;
-})(AliMNS || (AliMNS = {}));
 /// <reference path="Interfaces.ts" />
 /// <reference path="Account.ts" />
 /// <reference path="OpenStack.ts" />
@@ -1214,5 +1212,13 @@ var AliMNS;
     }());
     AliMNS.Subscription = Subscription;
 })(AliMNS || (AliMNS = {}));
+/// <reference path="ali-mns.ts" />
+/// <reference path="MNS.ts" />
+/// <reference path="Account.ts" />
+/// <reference path="Msg.ts" />
+/// <reference path="MQ.ts" />
+/// <reference path="MQBatch.ts" />
+// Exports the AliMNS
+module.exports = AliMNS;
 
 //# sourceMappingURL=index.js.map

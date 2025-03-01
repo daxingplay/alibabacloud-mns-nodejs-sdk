@@ -1,6 +1,6 @@
 {
-  "name": "ali-mns",
-  "version": "2.6.8",
+  "name": "ali-mns-ng",
+  "version": "2.7.1",
   "description": "The nodejs SDK for aliyun mns service",
   "main": "index.js",
   "dependencies": {
@@ -28,7 +28,7 @@
     "typescript": "^2.3.4"
   },
   "scripts": {
-    "prepare": "gulp",
+    "build": "gulp",
     "test": "node node_modules/mocha/bin/mocha"
   },
   "repository": {
